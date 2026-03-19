@@ -1,0 +1,1704 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Сопоставление — Barcode/Article + Reviewed + Search</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <style>
+      :root {
+        --bg-color:#fff; --text-color:#000; --header-bg:#f4f4f4; --border-color:#ccc;
+        --toolbar-height:56px; --page-max-width:1100px;
+        --danger:#dc2626; --danger-strong:#b91c1c; --muted:#6b7280;
+        --purple:#8b5cf6; --purple-dark:#6d28d9;
+        --ok:#22c55e; --warn:#f59e0b;
+      }
+      .dark { --bg-color:#1e1e1e; --text-color:#e0e0e0; --header-bg:#333; --border-color:#555; }
+      html,body{height:100%;margin:0}
+      body{
+        font-family:Arial, sans-serif; padding:20px; max-width:var(--page-max-width);
+        margin:0 auto; background:var(--bg-color); color:var(--text-color); box-sizing:border-box;
+      }
+
+      /* toolbar */
+      #toolbar{
+        position:fixed; top:12px; left:50%; transform:translateX(-50%);
+        z-index:1400; display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+        padding:8px 12px; background:rgba(255,255,255,.94);
+        border:1px solid var(--border-color); border-radius:12px;
+        box-shadow:0 6px 20px rgba(0,0,0,.08); backdrop-filter:blur(6px);
+        min-height:var(--toolbar-height); width:calc(100% - 40px);
+        max-width:calc(var(--page-max-width) + 260px);
+        overflow:hidden; transition:box-shadow .18s ease, background .18s ease;
+      }
+      #toolbar.scrolled{ box-shadow:0 14px 40px rgba(0,0,0,.16); background:rgba(255,255,255,.98) }
+      .dark #toolbar{ background:rgba(14,14,14,.95); box-shadow:0 6px 20px rgba(0,0,0,.28) }
+      #toolbarPlaceholder{ height:var(--toolbar-height); margin-bottom:16px; display:block }
+
+      @media (max-width:520px){
+        #toolbar{ gap:6px; padding:6px; min-height:48px; border-radius:10px }
+        #toolbar button{ padding:6px 8px; font-size:13px }
+        #toolbarPlaceholder{ height:48px }
+      }
+
+      .toolbar-search{
+        display:inline-flex; align-items:center; gap:6px;
+        padding:6px 8px; border:1px solid var(--border-color); border-radius:10px;
+        background:rgba(0,0,0,.02);
+      }
+      .dark .toolbar-search{ background:rgba(255,255,255,.04); }
+      #searchInput{
+        width:220px; max-width:50vw;
+        padding:6px 8px; border-radius:8px; border:1px solid var(--border-color);
+        background:var(--bg-color); color:var(--text-color); font-weight:700;
+      }
+      #searchCount{ font-size:12px; color:var(--muted); min-width:60px; text-align:right; }
+
+      .input-block{ margin-bottom:12px }
+      textarea{
+        width:100%; height:72px; font-family:monospace; background:var(--bg-color);
+        color:var(--text-color); border:1px solid var(--border-color); box-sizing:border-box; padding:8px;
+      }
+      button,.color-btn,.hide-btn,.move-btn{
+        padding:6px 10px; font-size:14px; cursor:pointer; margin-right:6px;
+        background:var(--header-bg); color:var(--text-color);
+        border:1px solid var(--border-color); border-radius:6px; font-weight:700;
+      }
+
+      table{ width:100%; border-collapse:collapse; margin-top:12px }
+      th,td{ border:1px solid var(--border-color); padding:8px; vertical-align:middle }
+      th{ background:var(--header-bg) }
+      .hidden-text td{ color:transparent }
+      .dragging{ opacity:.5 } .drag-over{ outline:2px dashed #007bff }
+      .manual-yellow td{ background-color:rgba(255,255,0,.35) }
+
+      /* фильтры */
+      .filtered-out{ display:none !important; }
+      .filtered-out-checked{ display:none !important; }
+
+      /* яркая подсветка для сумм/количеств (несовпадение) */
+      .sum-mismatch td:nth-child(6), .sum-mismatch td:nth-child(11){
+        background-color:rgba(220,38,38,.28); color:#fff; font-weight:800; border-left:3px solid var(--danger-strong);
+      }
+      .qty-mismatch td:nth-child(7), .qty-mismatch td:nth-child(12){
+        background-color:rgba(220,38,38,.28); color:#fff; font-weight:800; border-left:3px solid var(--danger-strong);
+      }
+
+      /* совпадения штрих/артикул */
+      .barcode-match td:nth-child(4), .barcode-match td:nth-child(9){
+        background-color:rgba(34,197,94,.22); font-weight:900; border-left:3px solid rgba(34,197,94,.65);
+      }
+      .article-match td:nth-child(5), .article-match td:nth-child(10){
+        background-color:rgba(34,197,94,.18); font-weight:900; border-left:3px solid rgba(34,197,94,.55);
+      }
+
+      .tentative td{ background-color:rgba(255,165,0,.08) }
+      .selected{ outline:2px solid #007bff }
+      .name-cell{ cursor:pointer }
+      .name-selected{ outline:2px solid #007bff; box-shadow:inset 0 0 0 2px rgba(0,123,255,.08); background-color:rgba(0,123,255,.04) }
+      #focusBox{ position:absolute; background:var(--bg-color); pointer-events:none; display:none }
+      .small{ font-size:12px; color:#666 }
+      .num-match{ background-color:rgba(0,255,0,.45); color:#000; padding:0 2px; border-radius:2px; font-weight:700 }
+      .moving-source{ outline:3px dashed #28a745; background:rgba(40,167,69,.04) }
+
+      .copy-sum,.copy-qty{
+        display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px;
+        margin-left:6px; padding:0; border-radius:3px; font-size:12px; line-height:1; cursor:pointer;
+        border:1px solid var(--border-color); background:var(--header-bg);
+      }
+
+      #hint{ margin-top:8px; font-size:13px; color:#444 }
+      .sum-wrapper{ display:inline-flex; align-items:center; gap:6px }
+      .sum-text{ white-space:nowrap }
+      .toolbar-totals{
+        margin-left:auto; display:flex; gap:14px; align-items:center;
+        font-size:13px; color:var(--muted); white-space:nowrap; flex-wrap:wrap;
+      }
+      .totals-item{ display:inline-flex; gap:6px; align-items:center; color:blue }
+      .totals-value{ font-weight:700; color:inherit; padding:4px 8px; border-radius:6px }
+      .totals-sum-mismatch{ box-shadow:0 6px 18px rgba(220,38,38,.14); color:#d51212 }
+      .totals-qty-mismatch{ box-shadow:0 6px 18px rgba(220,38,38,.14); color:#d51212 }
+
+      .match-stats{
+        display:inline-flex; gap:10px; align-items:center; color:var(--muted);
+      }
+      .stat-pill{
+        padding:4px 8px; border:1px solid var(--border-color); border-radius:999px;
+        background:rgba(0,0,0,.02); font-weight:800;
+      }
+      .dark .stat-pill{ background:rgba(255,255,255,.04); }
+
+      .color-word{
+        display:inline-block; padding:1px 6px; border-radius:6px;
+        background-color:rgba(139,92,246,.14); color:var(--purple-dark); font-weight:800;
+      }
+      .dark .color-word{ background-color:rgba(139,92,246,.22); color:#fff }
+
+      .cell-flash{ animation:cellFlash 1000ms ease; box-shadow:0 6px 24px rgba(220,38,38,.22); transform:translateZ(0) }
+      @keyframes cellFlash{
+        0%{ background-color:rgba(220,38,38,.36); color:#fff; transform:translateY(-1px) }
+        40%{ background-color:rgba(220,38,38,.28); transform:translateY(0) }
+        100%{ background-color:rgba(220,38,38,.2) }
+      }
+      .mismatch-focus{ animation:mismatchFlash 800ms ease }
+      @keyframes mismatchFlash{
+        0%{ box-shadow:0 0 0 0 rgba(220,38,38,0); transform:translateY(-2px) }
+        20%{ box-shadow:0 0 0 10px rgba(220,38,38,.1); transform:translateY(0) }
+        60%{ box-shadow:0 0 0 6px rgba(220,38,38,.06) }
+        100%{ box-shadow:0 0 0 0 rgba(220,38,38,0) }
+      }
+
+      /* поиск */
+      .search-hit{ outline:2px solid rgba(245,158,11,.65); box-shadow:0 8px 22px rgba(245,158,11,.12) }
+      .search-hit-cell{ background-color:rgba(245,158,11,.18) }
+    </style>
+  </head>
+  <body>
+    <div id="toolbar" role="toolbar" aria-label="Действия">
+      <button type="button" id="processBtn">Сопоставить</button>
+      <button type="button" id="addLeftBtn">+ Добавить слева</button>
+      <button type="button" id="addRightBtn">+ Добавить справа</button>
+      <button type="button" id="groupSumsBtn">Сгруппировать по суммам</button>
+      <button type="button" id="sortSimBtn">Сортировать по схожести</button>
+      <button type="button" id="gotoMismatchBtn">Перейти к несходящему ↓</button>
+      <button type="button" id="toggleCheckedFilterBtn" title="Скрыть/показать отмеченные">Скрыть отмеченные</button>
+
+      <div class="toolbar-search" role="search">
+        <input id="searchInput" type="text" placeholder="Поиск: имя/штрих/арт/сумма" />
+        <button type="button" id="searchPrevBtn" title="Предыдущее совпадение">◀</button>
+        <button type="button" id="searchNextBtn" title="Следующее совпадение">▶</button>
+        <span id="searchCount">0/0</span>
+      </div>
+
+      <button type="button" id="toggleFocusBtn">🔍 Фокус</button>
+      <button type="button" id="toggleThemeBtn">🌙 Темный режим</button>
+      <button type="button" id="removeHiddenBtn">Убрать скрытые строки</button>
+      <button type="button" id="undoBtn" title="Ctrl+Z">↶ Отменить</button>
+      <button type="button" id="redoBtn" title="Ctrl+Y / Ctrl+Shift+Z">↷ Повторить</button>
+      <button type="button" id="filterYellowBtn" title="Показать только жёлтые строки">Только жёлтые</button>
+
+      <div class="toolbar-totals" aria-hidden="false">
+        <div class="totals-item">
+          Итого (левый): <span id="topLeftSum" class="totals-value">0,00</span> /
+          <span id="topLeftQty" class="totals-value">0</span>
+        </div>
+        <div class="totals-item">
+          Итого (правый): <span id="topRightSum" class="totals-value">0,00</span> /
+          <span id="topRightQty" class="totals-value">0</span>
+        </div>
+        <div class="match-stats" aria-hidden="false">
+          <span class="stat-pill" id="statSum">Суммы: 0</span>
+          <span class="stat-pill" id="statQty">Кол-во: 0</span>
+          <span class="stat-pill" id="statBc">Штрих: 0</span>
+          <span class="stat-pill" id="statArt">Артикул: 0</span>
+        </div>
+      </div>
+    </div>
+    <div id="toolbarPlaceholder" aria-hidden="true"></div>
+
+    <h1>Сопоставление по имени, штриху/артикулу, сумме и количеству</h1>
+
+    <div class="input-block">
+      <label>1. Наименования (по одному на строке):</label>
+      <textarea id="namesList" placeholder="Наименование"></textarea>
+    </div>
+    <div class="input-block">
+      <label>1. Штрихкод (опционально, по одной записи на строку):</label>
+      <textarea id="bcList" placeholder="4870001234567"></textarea>
+    </div>
+    <div class="input-block">
+      <label>1. Артикул (опционально, по одной записи на строку):</label>
+      <textarea id="artList" placeholder="A12B-34"></textarea>
+    </div>
+    <div class="input-block">
+      <label>1. Суммы (формат 49 333,00):</label>
+      <textarea id="sumsList" placeholder="27 240,00"></textarea>
+    </div>
+    <div class="input-block">
+      <label>1. Количество (опционально, по одной записи на строку):</label>
+      <textarea id="qtyList" placeholder="10"></textarea>
+    </div>
+
+    <div class="input-block">
+      <label>2. Наименования (по одному на строке):</label>
+      <textarea id="names2List" placeholder="Наименование"></textarea>
+    </div>
+    <div class="input-block">
+      <label>2. Штрихкод (опционально, по одной записи на строку):</label>
+      <textarea id="bc2List" placeholder="4870001234567"></textarea>
+    </div>
+    <div class="input-block">
+      <label>2. Артикул (опционально, по одной записи на строку):</label>
+      <textarea id="art2List" placeholder="A12B-34"></textarea>
+    </div>
+    <div class="input-block">
+      <label>2. Суммы (формат 27 240,01):</label>
+      <textarea id="sums2List" placeholder="27 240,01"></textarea>
+    </div>
+    <div class="input-block">
+      <label>2. Количество (опционально, по одной записи на строку):</label>
+      <textarea id="qty2List" placeholder="5"></textarea>
+    </div>
+
+    <div id="hint">
+      Подсвечиваются фиолетовым слова-цвета (включая сокращения: <em>бел, кор, зел</em>).
+      Поиск включает также суммы/кол-во/штрих/артикул и подсвечивает найденное.
+    </div>
+
+    <div id="output"></div>
+    <div id="focusBox"></div>
+
+    <script>
+      /* ==================== tiny helpers / DRY ==================== */
+      const $ = (s, r=document) => r.querySelector(s);
+      const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
+      const on = (el, ev, h, opts) => ev.split(' ').forEach(e => el.addEventListener(e, h, opts));
+      const setText = (el, txt) => el && (el.textContent = String(txt));
+
+      const TA = {
+        n1:'namesList', bc1:'bcList', a1:'artList', s1:'sumsList', q1:'qtyList',
+        n2:'names2List', bc2:'bc2List', a2:'art2List', s2:'sums2List', q2:'qty2List'
+      };
+
+      const COL = {
+        idx:0, actions:1,
+        name1:2, bc1:3, art1:4, sum1:5, qty1:6,
+        name2:7, bc2:8, art2:9, sum2:10, qty2:11,
+        sim:12, reviewed:13, color:14
+      };
+
+      const ROW_STATE_KEY = "match_row_state_v2";
+
+      const saveLS = (k,v)=>{ try{ localStorage.setItem(k, JSON.stringify(v)) }catch{} };
+      const loadLS = (k,def={})=>{ try{ const x=localStorage.getItem(k); return x?JSON.parse(x):def }catch{ return def } };
+
+      /* ==================== HISTORY: undo/redo ==================== */
+      const HISTORY_LIMIT = 200;
+      let undoStack = [];
+      let redoStack = [];
+
+      let groupedBySums=false, sortSimActive=false, mismatchPointer=-1;
+      let yellowFilterActive=false;
+      let checkedFilterActive=false;
+      let lastViewBeforeGroup=null, lastViewBeforeSort=null;
+
+      function snapshotFromDOM(){
+        const tbody=$("tbody"); if(!tbody) return [];
+        return Array.from(tbody.children).map(r=>({
+          type:"item",
+          name1: stripHtml(r.children[COL.name1]?.innerHTML||""),
+          bc1:   stripHtml(r.children[COL.bc1]?.innerHTML||""),
+          art1:  stripHtml(r.children[COL.art1]?.innerHTML||""),
+          sum1: parseSum(r.children[COL.sum1]?.textContent||"0"),
+          qty1: parseSum(r.children[COL.qty1]?.textContent||"0"),
+          name2: stripHtml(r.children[COL.name2]?.innerHTML||""),
+          bc2:   stripHtml(r.children[COL.bc2]?.innerHTML||""),
+          art2:  stripHtml(r.children[COL.art2]?.innerHTML||""),
+          sum2: parseSum(r.children[COL.sum2]?.textContent||"0"),
+          qty2: parseSum(r.children[COL.qty2]?.textContent||"0"),
+          rowClass: (r.className||"")
+            .replace(/\bmanual-yellow\b/g,"")
+            .replace(/\bfiltered-out\b/g,"")
+            .replace(/\bfiltered-out-checked\b/g,"")
+            .trim(),
+          hidden: r.classList.contains("hidden-text"),
+          similarity: parseSimilarityText(r.children[COL.sim]?.textContent||""),
+          tentative: r.classList.contains("tentative"),
+          manualYellow: r.classList.contains("manual-yellow"),
+          reviewed: r.classList.contains("reviewed-row"),
+          i: r.hasAttribute("data-i") ? Number(r.getAttribute("data-i")) : null,
+          j: r.hasAttribute("data-j") ? Number(r.getAttribute("data-j")) : null,
+        }));
+      }
+
+      function captureState(){
+        return {
+          inputs: {
+            n1: $('#'+TA.n1)?.value || "",
+            bc1:$('#'+TA.bc1)?.value || "",
+            a1: $('#'+TA.a1)?.value || "",
+            s1: $('#'+TA.s1)?.value || "",
+            q1: $('#'+TA.q1)?.value || "",
+            n2: $('#'+TA.n2)?.value || "",
+            bc2:$('#'+TA.bc2)?.value || "",
+            a2: $('#'+TA.a2)?.value || "",
+            s2: $('#'+TA.s2)?.value || "",
+            q2: $('#'+TA.q2)?.value || ""
+          },
+          table: snapshotFromDOM(),
+          flags: {
+            groupedBySums,
+            sortSimActive,
+            mismatchPointer,
+            dark: document.documentElement.classList.contains('dark'),
+            hiddenRemoved,
+            yellowFilterActive,
+            checkedFilterActive,
+            search: $('#searchInput')?.value || ""
+          }
+        };
+      }
+      function applyState(st){
+        if(!st) return;
+        const I=st.inputs||{};
+        if($('#'+TA.n1)) $('#'+TA.n1).value = I.n1||"";
+        if($('#'+TA.bc1))$('#'+TA.bc1).value= I.bc1||"";
+        if($('#'+TA.a1)) $('#'+TA.a1).value = I.a1||"";
+        if($('#'+TA.s1)) $('#'+TA.s1).value = I.s1||"";
+        if($('#'+TA.q1)) $('#'+TA.q1).value = I.q1||"";
+        if($('#'+TA.n2)) $('#'+TA.n2).value = I.n2||"";
+        if($('#'+TA.bc2))$('#'+TA.bc2).value= I.bc2||"";
+        if($('#'+TA.a2)) $('#'+TA.a2).value = I.a2||"";
+        if($('#'+TA.s2)) $('#'+TA.s2).value = I.s2||"";
+        if($('#'+TA.q2)) $('#'+TA.q2).value = I.q2||"";
+        saveInputs();
+
+        groupedBySums = !!st.flags.groupedBySums;
+        sortSimActive = !!st.flags.sortSimActive;
+        mismatchPointer = typeof st.flags.mismatchPointer==='number' ? st.flags.mismatchPointer : -1;
+        hiddenRemoved = !!st.flags.hiddenRemoved;
+        yellowFilterActive = !!st.flags.yellowFilterActive;
+        checkedFilterActive = !!st.flags.checkedFilterActive;
+
+        document.documentElement.classList.toggle('dark', !!st.flags.dark);
+        $("#toggleThemeBtn").textContent = st.flags.dark ? "☀️ Светлый режим" : "🌙 Темный режим";
+        $("#groupSumsBtn").textContent = groupedBySums ? "Вернуть исходный порядок" : "Сгруппировать по суммам";
+        $("#sortSimBtn").textContent = sortSimActive ? "Вернуть порядок" : "Сортировать по схожести";
+        $("#filterYellowBtn").textContent = yellowFilterActive ? "Показать все" : "Только жёлтые";
+        $("#toggleCheckedFilterBtn").textContent = checkedFilterActive ? "Показать отмеченные" : "Скрыть отмеченные";
+        $('#searchInput').value = st.flags.search || "";
+
+        renderTable(st.table && st.table.length ? st.table : []);
+        applySearch($('#searchInput').value);
+      }
+      function pushUndo(label){
+        const st = captureState();
+        st.label = label || "";
+        undoStack.push(st);
+        if(undoStack.length > HISTORY_LIMIT) undoStack.shift();
+        redoStack.length = 0;
+      }
+      function undo(){
+        if(!undoStack.length) return;
+        const current = captureState();
+        const prev = undoStack.pop();
+        redoStack.push(current);
+        applyState(prev);
+      }
+      function redo(){
+        if(!redoStack.length) return;
+        const current = captureState();
+        const next = redoStack.pop();
+        undoStack.push(current);
+        applyState(next);
+      }
+
+      /* ==================== parsing / formatting ==================== */
+      function parseSum(str){
+        if (typeof str !== "string" && typeof str !== "number") return 0;
+        const s = String(str).replace(/\s/g,"");
+        const cleaned = s.replace(/,(?=.*?,)/g,"").replace(",",".");
+        const n = parseFloat(cleaned);
+        return isNaN(n)?0:n;
+      }
+      function formatSum(n){
+        n = Number(n)||0;
+        return n.toLocaleString("ru-RU",{minimumFractionDigits:2, maximumFractionDigits:2});
+      }
+      function formatQty(n){
+        n = Number(n)||0;
+        return Number.isInteger(n)
+          ? n.toLocaleString("ru-RU")
+          : n.toLocaleString("ru-RU",{minimumFractionDigits:2, maximumFractionDigits:2});
+      }
+      const escapeHtml = (str)=>String(str).replace(/[&<>\"']/g,(c)=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+      const stripHtml = (html)=>{ const d=document.createElement("div"); d.innerHTML=String(html||""); return d.textContent||d.innerText||"" };
+
+      function normalizeCode(s){
+        const t=String(s||"").trim();
+        if(!t) return "";
+        return t.replace(/\s+/g,"").toUpperCase();
+      }
+
+      /* ==================== levenshtein & name tools ==================== */
+      function levenshtein(a,b){
+        a=String(a||""); b=String(b||"");
+        const la=a.length, lb=b.length; if(!la) return lb; if(!lb) return la;
+        const prev=new Array(lb+1), cur=new Array(lb+1);
+        for(let j=0;j<=lb;j++) prev[j]=j;
+        for(let i=1;i<=la;i++){
+          cur[0]=i;
+          for(let j=1;j<=lb;j++){
+            const cost=a[i-1]===b[j-1]?0:1;
+            cur[j]=Math.min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost);
+          }
+          for(let j=0;j<=lb;j++) prev[j]=cur[j];
+        }
+        return prev[lb];
+      }
+
+      function normalizeName(s){
+        if(!s) return "";
+        let str=String(s).toLowerCase();
+        try{ str=str.normalize("NFD").replace(/[\u0300-\u036f]/g,"") }catch{}
+        str=str.replace(/[×xхX]/g,"x").replace(/(\d+)\s*x\s*(\d+)/g,"$1 $2")
+               .replace(/(\d+)\s*мм\b/g,"$1").replace(/\bмм\b/g,"")
+               .replace(/[.,\/\\()\[\]{}\-_:;"'«»–—…·*?]/g," ");
+        try{ str=str.replace(/[^\p{L}\p{N}\s]+/gu," ") }catch{ str=str.replace(/[^a-zA-Z0-9а-яА-ЯёЁ\s]+/g," ") }
+        str=str.replace(/\s+/g," ").trim(); if(!str) return "";
+
+        let tokens=str.split(" ").filter(Boolean);
+        const MAP={ корич:"коричневый","корич.":"коричневый", зел:"зеленый","зел.":"зеленый", бел:"белый","бел.":"белый", керамин:"керамогранит", керам:"керамогранит", керамограніт:"керамогранит" };
+        tokens=tokens.map(t=>MAP[t]||t);
+
+        const out=[];
+        for(let i=0;i<tokens.length;i++){
+          const t=tokens[i], n=tokens[i+1];
+          if(/^\d+$/.test(t) && /^\d+$/.test(n)){ out.push(`size:${Math.min(+t,+n)}x${Math.max(+t,+n)}`); i++; continue; }
+          out.push(t);
+        }
+        const expanded=[];
+        for(const t of out){
+          if(t.length>3 && t.length%2===0){
+            const h=t.slice(0,t.length/2); if(h+h===t){ expanded.push(h,h); continue; }
+          }
+          expanded.push(t);
+        }
+        return expanded.filter(Boolean).sort().join(" ");
+      }
+
+      function makeMatchKey(s){
+        if(!s && s!==0) return "";
+        let str=String(s).toLowerCase(); try{ str=str.normalize("NFD").replace(/[\u0300-\u036f]/g,"") }catch{}
+        str=str.replace(/ё/g,"е");
+        const LAT2CYR={a:"а",e:"е",o:"о",p:"р",c:"с",y:"у",x:"х",k:"к",m:"м",h:"н",b:"в",t:"т"};
+        str=str.replace(/[A-Za-z]/g, ch=>LAT2CYR[ch]||ch)
+               .replace(/['ʼ’`´˝“”«»"]/g,"")
+               .replace(/[ьъ]/g,"");
+        try{ str=str.replace(/[^\p{L}\p{N}\s:×x]/gu," ") }catch{ str=str.replace(/[^a-zA-Z0-9а-яА-ЯёЁ\s:×x]/g," ") }
+        return str.replace(/\s+/g," ").trim();
+      }
+
+      const MANUAL_MAP={}, COLOR_STEMS=["корич","кор","бел","зел","черн","чёрн","сер","красн","фиолет","фиол","роз","розов","син","жёлт","желт","оранж","бирюз","голуб","беж","бежев"];
+      let DICTIONARY=["коричневый","зеленый","белый","керамогранит","плитка","карандаш","черный","серый","красный"];
+      const MIN_COMMON=2;
+
+      const normToken=(t)=>String(t||"").toLowerCase().replace(/\.$/,"");
+      const stripEnd=(t)=>String(t).replace(/(а|я|ки|ок|оков|ов|ы|и|ые|ое|ый|ий|ой|ых|ми|ами|ом|ем|ам|ям)$/i,"");
+      function expandShortToken(token){
+        if(!token) return token;
+        if(/^size:/.test(token) || /^\d+$/.test(token)) return token;
+        const t=normToken(token);
+        if(MANUAL_MAP[t]) return MANUAL_MAP[t];
+        if(DICTIONARY.includes(t)) return t;
+        const s=stripEnd(t); if(s && s!==t){ const p=DICTIONARY.find(w=>w.startsWith(s)); if(p){ MANUAL_MAP[t]=p; return p; } }
+        if(t.length<=4){ const p=DICTIONARY.find(w=>w.startsWith(t)); if(p){ MANUAL_MAP[t]=p; return p; } }
+        let best=null, d0=1e9; for(const c of DICTIONARY){ const d=levenshtein(t,c); if(d<d0){ d0=d; best=c; } }
+        const thr = t.length<=3?1:t.length<=6?2:3;
+        if(best && d0<=thr){ if(d0<=1) MANUAL_MAP[t]=best; return best; }
+        return token;
+      }
+      function learnDictionaryFromCorpus(lines){
+        const freq={}; lines.forEach(line=>{
+          if(!line) return;
+          String(line).toLowerCase().replace(/[.,\/\\()«»\-:;"']/g," ").split(/\s+/).filter(Boolean).forEach(t=>{
+            if(/^\d+$/.test(t)) return; if(t.length>=4) freq[t]=(freq[t]||0)+1;
+          });
+        });
+        const top=Object.entries(freq).sort((a,b)=>b[1]-a[1]).slice(0,200).map(x=>x[0]);
+        DICTIONARY=Array.from(new Set(DICTIONARY.concat(top)));
+      }
+
+      function tokenNearlyEqual(a,b){
+        if(!a && !b) return true; if(!a || !b) return false; if(a===b) return true;
+        if(/^size:/.test(a)||/^\d+$/.test(a)||/^size:/.test(b)||/^\d+$/.test(b)) return a===b;
+        const L=Math.max(a.length,b.length), d=levenshtein(a,b), thr= L<=4?1: L<=8?2: Math.max(3, Math.ceil(L*0.12));
+        return d<=thr;
+      }
+      function namesAreEquivalent(aName,bName){
+        if(!aName && !bName) return {close:true,tentative:false};
+        if(!aName || !bName) return {close:false,tentative:false};
+        const aKey=makeMatchKey(normalizeName(aName)), bKey=makeMatchKey(normalizeName(bName));
+        if(aKey===bKey) return {close:true,tentative:false};
+        const aTok=aKey.split(" ").filter(Boolean), bTok=bKey.split(" ").filter(Boolean);
+        const aSet=new Set(aTok), bSet=new Set(bTok);
+        let exact=0; for(const t of aSet) if(bSet.has(t)) exact++;
+        if(exact>=MIN_COMMON) return {close:true,tentative:false};
+
+        const used=new Array(bTok.length).fill(false); let matched=0, approx=false;
+        for(const at of aTok){
+          let ok=false;
+          for(let j=0;j<bTok.length;j++){ if(used[j]) continue; if(at===bTok[j]){ used[j]=true; matched++; ok=true; break; } }
+          if(ok) continue;
+          for(let j=0;j<bTok.length;j++){ if(used[j]) continue; if(tokenNearlyEqual(at,bTok[j])){ used[j]=true; matched++; approx=true; break; } }
+        }
+        const minNeeded=Math.max(1, Math.ceil(Math.min(aTok.length,bTok.length)*0.6));
+        if(matched>=minNeeded) return {close:true, tentative:approx};
+        const lw=levenshtein(aKey,bKey), maxL=Math.max(aKey.length,bKey.length,1);
+        if(lw<=Math.ceil(maxL*0.12)) return {close:true, tentative:true};
+        return {close:false,tentative:false};
+      }
+      function nameSimilarityPct(aName,bName){
+        const aNorm=makeMatchKey(normalizeName(aName)), bNorm=makeMatchKey(normalizeName(bName));
+        if(!aNorm && !bNorm) return 100; if(!aNorm || !bNorm) return 0;
+        const aSet=new Set(aNorm.split(" ").filter(Boolean)), bSet=new Set(bNorm.split(" ").filter(Boolean));
+        const inter=Array.from(aSet).filter(t=>bSet.has(t)).length;
+        if(inter<MIN_COMMON) return 0;
+        const lev=levenshtein(aNorm,bNorm), maxL=Math.max(aNorm.length,bNorm.length,1);
+        const charScore=Math.max(0, 1 - lev/maxL);
+        const tokenScore= inter / Math.min(Math.max(aSet.size,1), Math.max(bSet.size,1));
+        return Math.round((tokenScore*0.85 + charScore*0.15)*100);
+      }
+
+      /* ==================== number highlighting ==================== */
+      function extractNumberValues(str){
+        const vals=[]; if(!str) return vals;
+        let m; const sizeRe=/(\d{1,4})\s*[x×хX]\s*(\d{1,4})(?:[.,]\d+)?/g;
+        while((m=sizeRe.exec(str))!==null){ const a=parseFloat(m[1].replace(/\s+/g,"")), b=parseFloat(m[2].replace(/\s+/g,"")); if(!isNaN(a)) vals.push(a); if(!isNaN(b)) vals.push(b); }
+        const numRe=/(?:(?:\d{1,3}(?:[ \u00A0]\d{3})+)|\d+)(?:[.,]\d+)?/g;
+        while((m=numRe.exec(str))!==null){ const n=parseFloat(m[0].replace(/\s+/g,"").replace(",",".")); if(!isNaN(n)) vals.push(n); }
+        return vals;
+      }
+      function numbersEquivalent(n1,n2){
+        if(!isFinite(n1)||!isFinite(n2)) return false;
+        if(n1===n2) return true;
+        const absTol=Math.max(0.01, Math.max(Math.abs(n1),Math.abs(n2))*0.005);
+        if(Math.abs(n1-n2)<=absTol) return true;
+        if(n1===0||n2===0) return false;
+        const ratio=Math.abs(n1/n2), lg=Math.log10(ratio), k=Math.round(lg);
+        return Math.abs(lg-k)<1e-6;
+      }
+      function highlightCommonNumbers(a,b){
+        const escA=escapeHtml(String(a||"")), escB=escapeHtml(String(b||""));
+        const valsA=extractNumberValues(a), valsB=extractNumberValues(b);
+        if(!valsA.length || !valsB.length) return [escA,escB];
+        const common=[]; for(const na of valsA) for(const nb of valsB) if(numbersEquivalent(na,nb)) common.push({na,nb});
+        if(!common.length) return [escA,escB];
+        const combinedRe=/(\d{1,4}\s*[x×хX]\s*\d{1,4}(?:[.,]\d+)?)|(?:(?:\d{1,3}(?:[ \u00A0]\d{3})+)|\d+)(?:[.,]\d+)?/g;
+        const wrap=(s)=>String(s).replace(combinedRe,(tok)=>{
+          if(/[x×хX]/.test(tok)){
+            return tok.replace(/(\d{1,4})/g,(part)=>{
+              const n=parseFloat(part.replace(/\s+/g,""));
+              return common.some(c=>numbersEquivalent(c.na,n)||numbersEquivalent(c.nb,n)) ? '<span class="num-match">'+part+'</span>' : part;
+            });
+          }
+          const n=parseFloat(tok.replace(/\s+/g,"").replace(",",".")); if(isNaN(n)) return tok;
+          return (common.some(c=>numbersEquivalent(c.na,n)||numbersEquivalent(c.nb,n)) ? '<span class="num-match">'+tok+'</span>' : tok);
+        });
+        return [wrap(escA), wrap(escB)];
+      }
+
+      /* ==================== persisted row state ==================== */
+      const loadRowState = ()=>loadLS(ROW_STATE_KEY,{});
+      const saveRowState = (st)=>saveLS(ROW_STATE_KEY, st);
+      const keyFromIJ = (i,j)=> (j!=null?`j:${j}`: (i!=null?`i:${i}`:null));
+      const keyFromRow = (row)=>{
+        const hasI=row.hasAttribute("data-i"), hasJ=row.hasAttribute("data-j");
+        return keyFromIJ(hasI?Number(row.getAttribute("data-i")):null, hasJ?Number(row.getAttribute("data-j")):null);
+      };
+      const applyPersistedStateToBlock = (block, map)=>{
+        const k = keyFromIJ( typeof block.i==="number"?block.i:null, typeof block.j==="number"?block.j:null );
+        if(!k) return {hidden:!!block.hidden, manualYellow:!!block.manualYellow, reviewed:!!block.reviewed};
+        const st=map[k];
+        return {
+          hidden: st?.hidden ?? !!block.hidden,
+          manualYellow: st?.manualYellow ?? !!block.manualYellow,
+          reviewed: st?.reviewed ?? !!block.reviewed
+        };
+      };
+      const updateRowStateFromRow = (row)=>{
+        const k=keyFromRow(row); if(!k) return;
+        const st=loadRowState();
+        st[k]={
+          hidden: row.classList.contains("hidden-text"),
+          manualYellow: row.classList.contains("manual-yellow"),
+          reviewed: row.classList.contains("reviewed-row")
+        };
+        saveRowState(st);
+      };
+
+      function parseSimilarityText(txt){ const m=String(txt||"").match(/(\d{1,3})\s*%/); return m?Number(m[1]):null; }
+
+      /* ==================== table state save/restore ==================== */
+      function saveTableState(){
+        try{ saveLS("tableState_v2", snapshotFromDOM()); }catch{}
+      }
+
+      function updateRowFlags(row){
+        const sum1=parseSum(row.children[COL.sum1].textContent);
+        const qty1=parseSum(row.children[COL.qty1].textContent);
+        const sum2=parseSum(row.children[COL.sum2].textContent);
+        const qty2=parseSum(row.children[COL.qty2].textContent);
+        row.classList.toggle("sum-mismatch", Math.abs(sum1-sum2)>0.009);
+        row.classList.toggle("qty-mismatch", Math.abs(qty1-qty2)>0.009);
+
+        const bc1=normalizeCode(stripHtml(row.children[COL.bc1].innerHTML));
+        const bc2=normalizeCode(stripHtml(row.children[COL.bc2].innerHTML));
+        const a1 =normalizeCode(stripHtml(row.children[COL.art1].innerHTML));
+        const a2 =normalizeCode(stripHtml(row.children[COL.art2].innerHTML));
+        row.classList.toggle("barcode-match", !!bc1 && !!bc2 && bc1===bc2);
+        row.classList.toggle("article-match", !!a1 && !!a2 && a1===a2);
+      }
+
+      /* ==================== render ==================== */
+      function renderTable(rowsData){
+        mismatchPointer=-1;
+        const out=$("#output");
+        if(!rowsData || !rowsData.length){
+          out.innerHTML="<p>Нет данных для отображения.</p>";
+          computeTotals(); saveTableState();
+          return;
+        }
+        const persisted=loadRowState();
+
+        let html=`<table><thead><tr>
+          <th>#</th><th></th>
+          <th>Наименование (1)</th><th>Штрих (1)</th><th>Артикул (1)</th><th>Сумма (1)</th><th>Кол-во (1)</th>
+          <th>Наименование (2)</th><th>Штрих (2)</th><th>Артикул (2)</th><th>Сумма (2)</th><th>Кол-во (2)</th>
+          <th>Схожесть</th>
+          <th>✓</th>
+          <th></th>
+        </tr></thead><tbody>`;
+
+        rowsData.forEach(block=>{
+          const disp = (block.j!=null && !isNaN(block.j)) ? (block.j+1)+"" : "";
+          let [n1H,n2H]=highlightCommonNumbers(block.name1||"", block.name2||"");
+          n1H = highlightColorWordsInHtml(n1H); n2H = highlightColorWordsInHtml(n2H);
+
+          const sum1 = typeof block.sum1==="number"? block.sum1 : parseSum(block.sum1||0);
+          const sum2 = typeof block.sum2==="number"? block.sum2 : parseSum(block.sum2||0);
+          const qty1 = typeof block.qty1==="number"? block.qty1 : parseSum(block.qty1||0);
+          const qty2 = typeof block.qty2==="number"? block.qty2 : parseSum(block.qty2||0);
+
+          const bc1 = escapeHtml(String(block.bc1||""));
+          const bc2 = escapeHtml(String(block.bc2||""));
+          const a1  = escapeHtml(String(block.art1||""));
+          const a2  = escapeHtml(String(block.art2||""));
+
+          const sumMismatch = Math.abs(sum1 - sum2) > 0.009;
+          const qtyMismatch = Math.abs(qty1 - qty2) > 0.009;
+
+          let rowClass = (block.rowClass||"").replace(/\bmanual-yellow\b/g,"").trim();
+          if(sumMismatch) rowClass += " sum-mismatch";
+          if(qtyMismatch) rowClass += " qty-mismatch";
+          if(block.tentative) rowClass += " tentative";
+
+          const eff = applyPersistedStateToBlock(block, persisted);
+          if(eff.hidden) rowClass += " hidden-text";
+          if(eff.manualYellow) rowClass += " manual-yellow";
+          if(eff.reviewed) rowClass += " reviewed-row";
+
+          const bcMatch = normalizeCode(block.bc1) && normalizeCode(block.bc2) && normalizeCode(block.bc1)===normalizeCode(block.bc2);
+          const aMatch  = normalizeCode(block.art1) && normalizeCode(block.art2) && normalizeCode(block.art1)===normalizeCode(block.art2);
+          if(bcMatch) rowClass += " barcode-match";
+          if(aMatch)  rowClass += " article-match";
+
+          const dataI = (block.i!=null && !isNaN(block.i))?` data-i="${block.i}"`:"";
+          const dataJ = (block.j!=null && !isNaN(block.j))?` data-j="${block.j}"`:"";
+
+          html += `<tr draggable="true" class="${escapeHtml(rowClass.trim())}" data-hidden="${eff.hidden}" data-row="true"${dataI}${dataJ}>
+            <td>${escapeHtml(disp)}</td>
+            <td>
+              <button type="button" class="hide-btn" title="Скрыть/показать">▶</button>
+              <button type="button" class="move-btn" data-side="left" title="Поменять местами слева">◀ L</button>
+              <button type="button" class="del-left"  title="Удалить слева">✖ L</button>
+              <button type="button" class="del-right" title="Удалить справа">✖ R</button>
+            </td>
+            <td class="name-cell" contenteditable="true" spellcheck="false">${n1H}</td>
+            <td class="edit-bc" contenteditable="true" spellcheck="false">${bc1}</td>
+            <td class="edit-art" contenteditable="true" spellcheck="false">${a1}</td>
+            <td contenteditable="true" class="edit-sum" data-col="sum1"><span class="sum-wrapper"><span class="sum-text">${escapeHtml(formatSum(sum1))}</span></span></td>
+            <td contenteditable="true" class="edit-qty" data-col="qty1"><span class="sum-wrapper"><span class="sum-text">${escapeHtml(formatQty(qty1))}</span></span></td>
+
+            <td class="name-cell" contenteditable="true" spellcheck="false">${n2H}</td>
+            <td class="edit-bc" contenteditable="true" spellcheck="false">${bc2}</td>
+            <td class="edit-art" contenteditable="true" spellcheck="false">${a2}</td>
+            <td contenteditable="true" class="edit-sum" data-col="sum2"><span class="sum-wrapper"><span class="sum-text">${escapeHtml(formatSum(sum2))}</span><button type="button" class="copy-sum" data-col="sum2" title="Скопировать сумму">◼</button></span></td>
+            <td contenteditable="true" class="edit-qty" data-col="qty2"><span class="sum-wrapper"><span class="sum-text">${escapeHtml(formatQty(qty2))}</span><button type="button" class="copy-qty" data-col="qty2" title="Скопировать кол-во">◼</button></span></td>
+
+            <td>${ block.similarity!=null ? block.similarity+"%" : "-" }${ block.tentative ? ' <span class="small">(предложено)</span>' : ''}</td>
+            <td style="text-align:center">
+              <input type="checkbox" class="reviewed-cb" ${eff.reviewed?'checked':''} title="Отмечено (просмотрено)">
+            </td>
+            <td><button type="button" class="color-btn" aria-pressed="${eff.manualYellow?'true':'false'}">🔴</button></td>
+          </tr>`;
+        });
+
+        html += `</tbody></table>`;
+        out.innerHTML = html;
+        rebindTable();
+        if (yellowFilterActive) applyYellowFilterToRows();
+        if (checkedFilterActive) applyCheckedFilterToRows();
+        computeTotals();
+        saveTableState();
+        applySearch($('#searchInput').value);
+      }
+
+      /* ==================== move/swap ==================== */
+      let moveState=null;
+      function clearMoveState(){
+        moveState=null; $$('.moving-source').forEach(el=>el.classList.remove('moving-source'));
+      }
+      function swapLeftPair(r1,r2){
+        pushUndo('swap-left-pair');
+        const n=COL.name1, bc=COL.bc1, a=COL.art1, s=COL.sum1, q=COL.qty1;
+
+        const A={name:r1.children[n].innerHTML, bc:r1.children[bc].innerHTML, art:r1.children[a].innerHTML, sum:r1.children[s].textContent, qty:r1.children[q].textContent, i:r1.getAttribute("data-i")};
+        const B={name:r2.children[n].innerHTML, bc:r2.children[bc].innerHTML, art:r2.children[a].innerHTML, sum:r2.children[s].textContent, qty:r2.children[q].textContent, i:r2.getAttribute("data-i")};
+
+        r1.children[n].innerHTML=B.name; r1.children[bc].innerHTML=B.bc; r1.children[a].innerHTML=B.art; r1.children[s].textContent=B.sum; r1.children[q].textContent=B.qty;
+        r2.children[n].innerHTML=A.name; r2.children[bc].innerHTML=A.bc; r2.children[a].innerHTML=A.art; r2.children[s].textContent=A.sum; r2.children[q].textContent=A.qty;
+
+        if(B.i!=null) r1.setAttribute("data-i",B.i); else r1.removeAttribute("data-i");
+        if(A.i!=null) r2.setAttribute("data-i",A.i); else r2.removeAttribute("data-i");
+
+        updateRowFlags(r1); updateRowFlags(r2);
+        updateRowStateFromRow(r1); updateRowStateFromRow(r2);
+        computeTotals(); saveTableState();
+      }
+
+      /* ==================== add/remove left/right ==================== */
+      const countNonEmptyLines = (id)=> { const ta=$( '#'+id ); if(!ta) return 0; return ta.value.split('\n').filter(l=>String(l).trim()!=="").length; };
+      const appendLine = (id,text)=>{ const ta=$('#'+id); if(!ta) return; ta.value = ta.value ? ta.value+"\n"+text : text; };
+      function removeTextareaLine(textareaId, filteredIndex){
+        const ta=$('#'+textareaId); if(!ta) return;
+        const lines=ta.value.split("\n");
+        const nonEmptyIdx=[]; for(let i=0;i<lines.length;i++) if(String(lines[i]).trim()!=="") nonEmptyIdx.push(i);
+        if(filteredIndex==null || filteredIndex<0 || filteredIndex>=nonEmptyIdx.length) return;
+        const real=nonEmptyIdx[filteredIndex]; lines.splice(real,1); ta.value=lines.join("\n"); saveInputs();
+      }
+      function adjustIndicesAfterRemoval(side, removedIndex){
+        const rows=$$('tbody tr[data-row="true"]');
+        const attr = side==="i" ? "data-i" : "data-j";
+        rows.forEach(r=>{
+          if(r.hasAttribute(attr)){
+            const v=Number(r.getAttribute(attr));
+            if(v>removedIndex) r.setAttribute(attr, String(v-1));
+            if(side==="j" && r.children[0]) r.children[0].textContent = r.hasAttribute("data-j") ? String(Number(r.getAttribute("data-j"))+1) : "";
+          }
+        });
+      }
+
+      function deleteSide(row, side){
+        if(side==="left" && row.hasAttribute("data-i")){
+          const i=Number(row.getAttribute("data-i"));
+          removeTextareaLine(TA.n1, i); removeTextareaLine(TA.bc1, i); removeTextareaLine(TA.a1, i);
+          removeTextareaLine(TA.s1, i); if(countNonEmptyLines(TA.q1)>i) removeTextareaLine(TA.q1, i);
+
+          row.children[COL.name1].innerHTML="-";
+          row.children[COL.bc1].innerHTML="";
+          row.children[COL.art1].innerHTML="";
+          row.children[COL.sum1].textContent=formatSum(0);
+          row.children[COL.qty1].textContent=formatQty(0);
+
+          row.removeAttribute("data-i");
+          updateRowFlags(row); adjustIndicesAfterRemoval("i", i); computeTotals();
+        }
+        if(side==="right" && row.hasAttribute("data-j")){
+          const j=Number(row.getAttribute("data-j"));
+          removeTextareaLine(TA.n2, j); removeTextareaLine(TA.bc2, j); removeTextareaLine(TA.a2, j);
+          removeTextareaLine(TA.s2, j); if(countNonEmptyLines(TA.q2)>j) removeTextareaLine(TA.q2, j);
+
+          if(row.children[0]) row.children[0].textContent="";
+          row.children[COL.name2].innerHTML="-";
+          row.children[COL.bc2].innerHTML="";
+          row.children[COL.art2].innerHTML="";
+          row.children[COL.sum2].textContent=formatSum(0);
+          row.children[COL.qty2].textContent=formatQty(0);
+
+          row.removeAttribute("data-j");
+          updateRowFlags(row); adjustIndicesAfterRemoval("j", j); computeTotals();
+        }
+
+        const leftEmpty = row.children[COL.name1]?.textContent.trim()==="-" && parseSum(row.children[COL.sum1]?.textContent)===0 && parseSum(row.children[COL.qty1]?.textContent)===0;
+        const rightEmpty= row.children[COL.name2]?.textContent.trim()==="-" && parseSum(row.children[COL.sum2]?.textContent)===0 && parseSum(row.children[COL.qty2]?.textContent)===0;
+        if(leftEmpty && rightEmpty) row.remove();
+        saveTableState();
+      }
+
+      function addNewItem(side){
+        pushUndo('add-item-'+side);
+        const nm = prompt(side==="left"?"Наименование (левая сторона):":"Наименование (правая сторона):"); if(!nm || !String(nm).trim()) return;
+        const bc = prompt("Штрихкод (опционально):","") || "";
+        const art = prompt("Артикул (опционально):","") || "";
+        const s = prompt("Сумма (пример: 49 333,00):","0");
+        const q = prompt("Кол-во (опционально, например 10):","");
+
+        const sum=parseSum(s||"0"); const qty= q && String(q).trim()!=="" ? parseSum(q) : 0;
+
+        if(side==="left"){
+          appendLine(TA.n1, nm); appendLine(TA.bc1, bc); appendLine(TA.a1, art);
+          appendLine(TA.s1, formatSum(sum)); if(q && String(q).trim()!=="") appendLine(TA.q1, formatQty(qty));
+        }else{
+          appendLine(TA.n2, nm); appendLine(TA.bc2, bc); appendLine(TA.a2, art);
+          appendLine(TA.s2, formatSum(sum)); if(q && String(q).trim()!=="") appendLine(TA.q2, formatQty(qty));
+        }
+        saveInputs();
+
+        const i = side==="left" ? countNonEmptyLines(TA.n1)-1 : null;
+        const j = side==="right"? countNonEmptyLines(TA.n2)-1 : null;
+
+        const snap=snapshotFromDOM();
+        snap.push({
+          type:"item",
+          name1: side==="left"? nm : "-",
+          bc1: side==="left"? bc : "",
+          art1: side==="left"? art : "",
+          sum1: side==="left"? sum:0,
+          qty1: side==="left"? qty:0,
+          name2: side==="right"? nm : "-",
+          bc2: side==="right"? bc : "",
+          art2: side==="right"? art : "",
+          sum2: side==="right"? sum:0,
+          qty2: side==="right"? qty:0,
+          rowClass: "",
+          hidden:false, similarity:null, tentative:false,
+          i, j, manualYellow:false, reviewed:false
+        });
+        renderTable(snap);
+        computeTotals();
+      }
+
+      /* ==================== inputs save/load ==================== */
+      function saveInputs(){
+        const map = [
+          ['names1',TA.n1],['bc1',TA.bc1],['art1',TA.a1],['sums1',TA.s1],['qty1',TA.q1],
+          ['names2',TA.n2],['bc2',TA.bc2],['art2',TA.a2],['sums2',TA.s2],['qty2',TA.q2],
+        ];
+        map.forEach(([k,id])=>{ const el=$('#'+id); if(el) localStorage.setItem(k, el.value); });
+      }
+      function loadInputs(){
+        const map = [
+          ['names1',TA.n1],['bc1',TA.bc1],['art1',TA.a1],['sums1',TA.s1],['qty1',TA.q1],
+          ['names2',TA.n2],['bc2',TA.bc2],['art2',TA.a2],['sums2',TA.s2],['qty2',TA.q2],
+        ];
+        map.forEach(([k,id])=>{ const v=localStorage.getItem(k); if(v!=null && $('#'+id)) $('#'+id).value=v; });
+      }
+      Object.values(TA).forEach(id=>{
+        const el=$('#'+id); if(!el) return;
+        on(el,'input',saveInputs);
+      });
+
+      /* ==================== color words highlight (FIXED) ==================== */
+      function makeColorRegex(){
+        const esc = (s)=>s.replace(/[-/\\^$*+?.()|[\]{}]/g,"\\$&");
+        const stems = COLOR_STEMS.map(esc).join("|");
+
+        // 1) пробуем unicode + lookbehind (правильные границы)
+        try{
+          return new RegExp("(?<![\\p{L}\\p{N}_-])(" + stems + ")[а-яё]*?(?![\\p{L}\\p{N}_-])","giu");
+        }catch{}
+
+        // 2) fallback без lookbehind: сохраняем префикс в группе 1
+        try{
+          return new RegExp("(^|[^A-Za-zА-Яа-яЁё0-9_-])(" + stems + ")[а-яё]*?(?![A-Za-zА-Яа-яЁё0-9_-])","gi");
+        }catch{
+          return null;
+        }
+      }
+      const COLOR_REGEX = makeColorRegex();
+
+      function highlightColorWordsInHtml(html){
+        if(!html || !COLOR_REGEX) return html;
+        const container=document.createElement("div"); container.innerHTML=html;
+
+        (function walk(node){
+          for(let i=0;i<node.childNodes.length;i++){
+            const ch=node.childNodes[i];
+            if(ch.nodeType===Node.TEXT_NODE){
+              const text=ch.nodeValue || "";
+              COLOR_REGEX.lastIndex=0;
+              if(!COLOR_REGEX.test(text)) continue;
+
+              const frag=document.createDocumentFragment();
+              let last=0; COLOR_REGEX.lastIndex=0; let m;
+
+              while((m=COLOR_REGEX.exec(text))!==null){
+                const idx=m.index;
+                if(idx>last) frag.appendChild(document.createTextNode(text.slice(last,idx)));
+
+                // если fallback: группа 1 = префикс, группа 2 = слово
+                let prefix="", word="";
+                if(m.length>=3 && m[1] && m[2]){
+                  prefix=m[1]; word=m[2];
+                }else{
+                  word=m[0];
+                }
+
+                if(prefix) frag.appendChild(document.createTextNode(prefix));
+                const span=document.createElement('span'); span.className='color-word'; span.textContent=word;
+                frag.appendChild(span);
+
+                last=COLOR_REGEX.lastIndex;
+              }
+              if(last<text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+              node.replaceChild(frag,ch);
+              i += frag.childNodes ? frag.childNodes.length-1 : 0;
+            }else if(ch.nodeType===Node.ELEMENT_NODE){
+              if(ch.classList?.contains('color-word')) continue; walk(ch);
+            }
+          }
+        })(container);
+
+        return container.innerHTML;
+      }
+
+      /* ==================== toolbar & focus ==================== */
+      (function toolbarInit(){
+        const toolbar=$("#toolbar");
+        const onScroll=()=>{ if(window.scrollY>8) toolbar.classList.add('scrolled'); else toolbar.classList.remove('scrolled') };
+        on(window,'scroll',onScroll,{passive:true});
+        $$('#toolbar button').forEach(btn=>{
+          on(btn,'focus',()=>toolbar.classList.add('scrolled'));
+          on(btn,'blur',()=>setTimeout(onScroll,10));
+        });
+        onScroll();
+      })();
+
+      let focusActive=false; const focusBtn=$("#toggleFocusBtn"), focusBox=$("#focusBox");
+      function onMouseMove(e){ focusBox.style.width=window.innerWidth+"px"; focusBox.style.height="400px"; focusBox.style.left="0px"; focusBox.style.top=(e.pageY+10)+"px"; }
+      on(focusBtn,'click',()=>{
+        focusActive=!focusActive;
+        if(focusActive){ focusBox.style.display='block'; on(document,'mousemove',onMouseMove); focusBtn.textContent="✖ Скрыть фокус"; }
+        else{ focusBox.style.display='none'; document.removeEventListener('mousemove', onMouseMove); focusBtn.textContent="🔍 Фокус"; }
+      });
+      on(document,'keydown',e=>{ if(e.key==='Escape') clearMoveState() });
+
+      /* ==================== filters ==================== */
+      function applyYellowFilterToRows(){
+        const rows = $$('tbody tr[data-row="true"]');
+        rows.forEach(r=>{
+          if (yellowFilterActive) {
+            if (r.classList.contains('manual-yellow')) r.classList.remove('filtered-out');
+            else r.classList.add('filtered-out');
+          } else {
+            r.classList.remove('filtered-out');
+          }
+        });
+      }
+      function applyCheckedFilterToRows(){
+        const rows = $$('tbody tr[data-row="true"]');
+        rows.forEach(r=>{
+          if (checkedFilterActive) {
+            if (r.classList.contains('reviewed-row')) r.classList.add('filtered-out-checked');
+            else r.classList.remove('filtered-out-checked');
+          } else {
+            r.classList.remove('filtered-out-checked');
+          }
+        });
+      }
+
+      /* ==================== rebind table handlers ==================== */
+      let hiddenRemoved=false, removedHiddenRows=[];
+      function rebindTable(){
+        const rows=$$('tbody tr[data-row="true"]');
+
+        rows.forEach(row=>{
+          if(row.dataset.bound==="1") return;
+
+          // hide/show
+          const hideBtn = row.querySelector('.hide-btn');
+          hideBtn && on(hideBtn,'click',e=>{
+            e.stopPropagation();
+            pushUndo('toggle-hide-row');
+            const wasHidden=row.classList.contains('hidden-text');
+            row.classList.toggle('hidden-text');
+            updateRowStateFromRow(row);
+
+            if(!wasHidden && row.classList.contains('hidden-text') && hiddenRemoved){
+              const tbody=row.parentNode; const list=Array.from(tbody.children);
+              const pos=list.indexOf(row); removedHiddenRows.push({html:row.outerHTML, index:pos}); tbody.removeChild(row);
+            }
+            computeTotals(); saveTableState();
+          });
+
+          // color toggle
+          const colorBtn = row.querySelector('.color-btn');
+          if(colorBtn){
+            on(colorBtn,'click',e=>{
+              e.stopPropagation();
+              pushUndo('toggle-color');
+              const now=row.classList.toggle('manual-yellow');
+              row.classList.remove('tentative');
+              colorBtn.setAttribute('aria-pressed', now?'true':'false');
+              updateRowStateFromRow(row); saveTableState();
+              if (yellowFilterActive) applyYellowFilterToRows();
+            });
+          }
+
+          // reviewed checkbox
+          const cb = row.querySelector('.reviewed-cb');
+          if(cb){
+            on(cb,'change', e=>{
+              e.stopPropagation();
+              pushUndo('toggle-reviewed');
+              row.classList.toggle('reviewed-row', cb.checked);
+              updateRowStateFromRow(row);
+              if(checkedFilterActive) applyCheckedFilterToRows();
+              saveTableState();
+            });
+          }
+
+          // move-left pairing
+          $$('.move-btn',row).forEach(btn=>{
+            on(btn,'click',e=>{
+              e.stopPropagation();
+              const all= $$('tbody tr[data-row="true"]');
+              const idx= all.indexOf(row);
+              const side='left';
+              if(moveState && moveState.row===idx && moveState.side===side){ clearMoveState(); return; }
+              clearMoveState(); moveState={row:idx, side}; row.classList.add('moving-source');
+            });
+          });
+
+          // delete sides (confirm)
+          const delL=row.querySelector('.del-left'), delR=row.querySelector('.del-right');
+          delL && on(delL,'click',e=>{
+            e.preventDefault(); e.stopPropagation();
+            if (!confirm('Удалить левую часть строки?')) return;
+            pushUndo('delete-left');
+            deleteSide(row,'left');
+          });
+          delR && on(delR,'click',e=>{
+            e.preventDefault(); e.stopPropagation();
+            if (!confirm('Удалить правую часть строки?')) return;
+            pushUndo('delete-right');
+            deleteSide(row,'right');
+          });
+
+          // row click (swap on target)
+          on(row,'click',e=>{
+            if(e.target.closest('.name-cell')) return;
+            if(moveState){
+              const all=$$('tbody tr[data-row="true"]');
+              const src=all[moveState.row], tgt=row;
+              const sIdx=all.indexOf(src), tIdx=all.indexOf(tgt);
+              if(src && tgt && sIdx!==tIdx){
+                swapLeftPair(src,tgt);
+                clearMoveState(); computeTotals(); return;
+              }
+            }
+            $$('.selected').forEach(r=>r.classList.remove('selected'));
+            row.classList.add('selected');
+          });
+
+          // name-cell focus style
+          $$('.name-cell',row).forEach(td=>{
+            on(td,'click',e=>{
+              e.stopPropagation();
+              $$('.name-selected').forEach(n=>n.classList.remove('name-selected'));
+              $$('.selected').forEach(r=>r.classList.remove('selected'));
+              td.classList.toggle('name-selected');
+            });
+          });
+
+          // drag & drop
+          on(row,'dragstart',e=>{
+            row.classList.add('dragging');
+            try{ e.dataTransfer.setData('text/plain', rows.indexOf(row)) }catch{}
+          });
+          on(row,'dragend',()=>{ row.classList.remove('dragging'); rows.forEach(r=>r.classList.remove('drag-over')) });
+          on(row,'dragover',e=>{ e.preventDefault(); if(!row.classList.contains('dragging')) row.classList.add('drag-over') });
+          on(row,'dragleave',()=>row.classList.remove('drag-over'));
+          on(row,'drop',e=>{
+            e.preventDefault();
+            const srcIdx=parseInt(e.dataTransfer.getData('text/plain'),10);
+            const all=Array.from(rows); const destIdx=all.indexOf(row);
+            if(!isNaN(srcIdx) && srcIdx!==destIdx){
+              pushUndo('reorder-row');
+              const tbody=row.parentNode, srcRow=all[srcIdx], ref= srcIdx<destIdx ? row.nextSibling : row;
+              tbody.insertBefore(srcRow, ref);
+              saveTableState();
+            }
+            rows.forEach(r=>r.classList.remove('drag-over'));
+            computeTotals();
+          });
+
+          row.dataset.bound="1";
+        });
+
+        // inline edits (sum/qty)
+        $$('.edit-sum, .edit-qty').forEach(el=>{
+          if(el.dataset.bound==="1") return;
+          on(el,'blur',()=>{
+            pushUndo('edit-cell');
+            const span=el.querySelector('.sum-text'); const raw=(span?span.textContent:el.textContent).trim();
+            const parsed=parseSum(raw); const col=el.dataset.col;
+            const fmt = (col==='sum1'||col==='sum2')?formatSum:formatQty;
+            if(span) span.textContent=fmt(parsed); else el.textContent=fmt(parsed);
+
+            const row=el.closest('tr'); if(row){
+              updateRowFlags(row);
+              if(col==='sum1' && row.hasAttribute('data-i')) updateTextareaLinePreservingEmpty(TA.s1, Number(row.getAttribute('data-i')), formatSum(parsed));
+              if(col==='sum2' && row.hasAttribute('data-j')) updateTextareaLinePreservingEmpty(TA.s2, Number(row.getAttribute('data-j')), formatSum(parsed));
+              if(col==='qty1' && row.hasAttribute('data-i')) updateTextareaLinePreservingEmpty(TA.q1, Number(row.getAttribute('data-i')), formatQty(parsed));
+              if(col==='qty2' && row.hasAttribute('data-j')) updateTextareaLinePreservingEmpty(TA.q2, Number(row.getAttribute('data-j')), formatQty(parsed));
+            }
+            computeTotals(); saveTableState();
+          });
+          on(el,'keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); el.blur(); }});
+          el.dataset.bound="1";
+        });
+
+        // barcode/article edits
+        $$('.edit-bc, .edit-art').forEach(el=>{
+          if(el.dataset.bound==="1") return;
+          on(el,'blur',()=>{
+            pushUndo('edit-code');
+            const row=el.closest('tr'); if(!row) return;
+
+            const isLeft = (el === row.children[COL.bc1] || el === row.children[COL.art1]);
+            const isBC = (el.classList.contains('edit-bc'));
+            const val = stripHtml(el.innerHTML);
+
+            if(isLeft && row.hasAttribute('data-i')){
+              const i=Number(row.getAttribute('data-i'));
+              if(isBC) updateTextareaLinePreservingEmpty(TA.bc1, i, val);
+              else updateTextareaLinePreservingEmpty(TA.a1, i, val);
+            }
+            if(!isLeft && row.hasAttribute('data-j')){
+              const j=Number(row.getAttribute('data-j'));
+              if(isBC) updateTextareaLinePreservingEmpty(TA.bc2, j, val);
+              else updateTextareaLinePreservingEmpty(TA.a2, j, val);
+            }
+
+            updateRowFlags(row);
+            computeTotals(); saveTableState();
+          });
+          on(el,'keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); el.blur(); }});
+          el.dataset.bound="1";
+        });
+
+        // name edits -> recompute similarity + highlights
+        $$('.name-cell').forEach(el=>{
+          if(el.dataset.bound==="1") return;
+          on(el,'blur', ()=>{
+            pushUndo('edit-name');
+            const row=el.closest('tr'); if(!row) return;
+            const left=stripHtml(row.children[COL.name1].innerHTML);
+            const right=stripHtml(row.children[COL.name2].innerHTML);
+            const [lh,rh]=highlightCommonNumbers(left,right);
+            row.children[COL.name1].innerHTML = highlightColorWordsInHtml(lh);
+            row.children[COL.name2].innerHTML = highlightColorWordsInHtml(rh);
+
+            const tentative=row.classList.contains('tentative');
+            const pct = (left||right)? nameSimilarityPct(left,right) : null;
+            row.children[COL.sim].innerHTML = (pct==null?'-':pct+'%') + (tentative ? ' <span class="small">(предложено)</span>':'');
+
+            if(row.hasAttribute('data-i')) updateTextareaLinePreservingEmpty(TA.n1, Number(row.getAttribute('data-i')), left);
+            if(row.hasAttribute('data-j')) updateTextareaLinePreservingEmpty(TA.n2, Number(row.getAttribute('data-j')), right);
+
+            updateRowFlags(row);
+            saveTableState();
+          });
+          on(el,'keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); el.blur(); }});
+          el.dataset.bound="1";
+        });
+
+        // copy buttons (sum/qty)
+        $$('.copy-sum[data-col="sum2"], .copy-qty[data-col="qty2"]').forEach(btn=>{
+          if(btn.dataset.bound==="1") return;
+          on(btn,'click', async e=>{
+            e.stopPropagation();
+            const row=btn.closest('tr'); if(!row) return;
+            const col=btn.getAttribute('data-col');
+            const cell = (col==='sum2') ? row.children[COL.sum2] : row.children[COL.qty2];
+            const span=cell.querySelector('.sum-text');
+            const text=(span?span.textContent.trim():"");
+            if(!text) return;
+            try{
+              if(navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+              else{ const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+              const prev=btn.textContent; btn.textContent='✓'; setTimeout(()=>btn.textContent=prev,800);
+            }catch{ const prev=btn.textContent; btn.textContent='✕'; setTimeout(()=>btn.textContent=prev,800); }
+          });
+          btn.dataset.bound="1";
+        });
+      }
+
+      function updateTextareaLinePreservingEmpty(textareaId, filteredIndex, newText){
+        const ta=$('#'+textareaId); if(!ta) return;
+        const full=ta.value.split('\n');
+        const nonEmpty=[]; for(let k=0;k<full.length;k++) if(String(full[k]).trim()!=="") nonEmpty.push(k);
+        if(filteredIndex==null || filteredIndex<0) full.push(newText);
+        else if(filteredIndex<nonEmpty.length) full[nonEmpty[filteredIndex]] = newText;
+        else{ while(full.length<filteredIndex) full.push(""); full.push(newText); }
+        ta.value=full.join('\n'); saveInputs();
+      }
+
+      /* ==================== totals + match stats ==================== */
+      function valFromTA(id){
+        const ta=$('#'+id); if(!ta) return null;
+        const raw=String(ta.value||"").trim(); return raw===""?null: raw.split("\n").map(s=>s.trim()).filter(Boolean);
+      }
+      function sumFromTAOrTable(taId, colIndex){
+        const lines=valFromTA(taId);
+        if(lines){ return lines.reduce((acc,ln)=> acc + parseSum(ln), 0 ); }
+        let total=0; $$('tbody tr[data-row="true"]').forEach(r=>{ const t=r.children[colIndex]?r.children[colIndex].textContent:""; total += parseSum(t) });
+        return total;
+      }
+
+      function computeMatchStats(){
+        const rows=$$('tbody tr[data-row="true"]');
+        let n=0, mSum=0, mQty=0, mBc=0, mArt=0;
+        rows.forEach(r=>{
+          n++;
+          const s1=parseSum(r.children[COL.sum1].textContent), s2=parseSum(r.children[COL.sum2].textContent);
+          const q1=parseSum(r.children[COL.qty1].textContent), q2=parseSum(r.children[COL.qty2].textContent);
+          if(Math.abs(s1-s2)<=0.009) mSum++;
+          if(Math.abs(q1-q2)<=0.009) mQty++;
+
+          const bc1=normalizeCode(stripHtml(r.children[COL.bc1].innerHTML));
+          const bc2=normalizeCode(stripHtml(r.children[COL.bc2].innerHTML));
+          if(bc1 && bc2 && bc1===bc2) mBc++;
+
+          const a1=normalizeCode(stripHtml(r.children[COL.art1].innerHTML));
+          const a2=normalizeCode(stripHtml(r.children[COL.art2].innerHTML));
+          if(a1 && a2 && a1===a2) mArt++;
+        });
+        setText($('#statSum'), `Суммы: ${mSum}/${n}`);
+        setText($('#statQty'), `Кол-во: ${mQty}/${n}`);
+        setText($('#statBc'),  `Штрих: ${mBc}/${n}`);
+        setText($('#statArt'), `Артикул: ${mArt}/${n}`);
+      }
+
+      function computeTotals(){
+        const totalSumL = sumFromTAOrTable(TA.s1, COL.sum1);
+        const totalQtyL = sumFromTAOrTable(TA.q1, COL.qty1);
+        const totalSumR = sumFromTAOrTable(TA.s2, COL.sum2);
+        const totalQtyR = sumFromTAOrTable(TA.q2, COL.qty2);
+
+        setText($("#topLeftSum"),  formatSum(totalSumL));
+        setText($("#topLeftQty"),  formatQty(totalQtyL));
+        setText($("#topRightSum"), formatSum(totalSumR));
+        setText($("#topRightQty"), formatQty(totalQtyR));
+
+        const sumMismatch = Math.abs(totalSumL - totalSumR) > 0.009;
+        const qtyMismatch = Math.abs(totalQtyL - totalQtyR) > 0.009;
+
+        $("#topLeftSum").classList.toggle('totals-sum-mismatch', sumMismatch);
+        $("#topRightSum").classList.toggle('totals-sum-mismatch', sumMismatch);
+        $("#topLeftQty").classList.toggle('totals-qty-mismatch', qtyMismatch);
+        $("#topRightQty").classList.toggle('totals-qty-mismatch', qtyMismatch);
+
+        computeMatchStats();
+      }
+
+      /* ==================== PROCESS ==================== */
+      $('#processBtn').addEventListener('click',()=>{
+        pushUndo('process-match');
+
+        const lines = id => $('#'+id).value.split('\n');
+        const trimF = a=>a.map(l=>l.trim()).filter(Boolean);
+
+        const names1=trimF(lines(TA.n1));
+        const bc1=lines(TA.bc1).map(l=>l.trim());
+        const art1=lines(TA.a1).map(l=>l.trim());
+        const sums1=trimF(lines(TA.s1));
+        const qty1=lines(TA.q1).map(l=>l.trim());
+
+        const names2=trimF(lines(TA.n2));
+        const bc2=lines(TA.bc2).map(l=>l.trim());
+        const art2=lines(TA.a2).map(l=>l.trim());
+        const sums2=trimF(lines(TA.s2));
+        const qty2=lines(TA.q2).map(l=>l.trim());
+
+        if(names1.length!==sums1.length || names2.length!==sums2.length){
+          alert("Количество строк в списках имён и сумм должно совпадать."); return;
+        }
+
+        const hasData=(arr)=>arr.some(x=>String(x||"").trim()!=="");
+        const cnt=(arr)=>arr.filter(x=>String(x||"").trim()!=="").length;
+
+        if(hasData(qty1) && cnt(qty1)!==names1.length){ alert("Слева: 'Количество' должно совпадать с количеством наименований."); return; }
+        if(hasData(qty2) && cnt(qty2)!==names2.length){ alert("Справа: 'Количество' должно совпадать с количеством наименований."); return; }
+
+        if(hasData(bc1) && cnt(bc1)!==names1.length){ alert("Слева: 'Штрихкод' должен совпадать по количеству строк с наименованиями (если заполнен)."); return; }
+        if(hasData(bc2) && cnt(bc2)!==names2.length){ alert("Справа: 'Штрихкод' должен совпадать по количеству строк с наименованиями (если заполнен)."); return; }
+
+        if(hasData(art1) && cnt(art1)!==names1.length){ alert("Слева: 'Артикул' должен совпадать по количеству строк с наименованиями (если заполнен)."); return; }
+        if(hasData(art2) && cnt(art2)!==names2.length){ alert("Справа: 'Артикул' должен совпадать по количеству строк с наименованиями (если заполнен)."); return; }
+
+        saveInputs();
+        learnDictionaryFromCorpus(names1.concat(names2));
+
+        const buildList=(n,bc,a,s,q)=> n.map((name,i)=>({
+          name,
+          bc: bc[i] ? String(bc[i]).trim() : "",
+          art: a[i] ? String(a[i]).trim() : "",
+          sum:parseSum(s[i]),
+          qty:q[i]?parseSum(q[i]):0
+        }));
+
+        const list1=buildList(names1, bc1, art1, sums1, qty1);
+        const list2=buildList(names2, bc2, art2, sums2, qty2);
+
+        const pairs=[];
+        list1.forEach((A,i)=> list2.forEach((B,j)=>{
+          const sumDiff=Math.abs(A.sum-B.sum);
+          const sumThreshold=Math.max(0.01, Math.min(Math.abs(A.sum),Math.abs(B.sum))*0.01);
+          const nm=namesAreEquivalent(A.name,B.name);
+
+          const bcEq = normalizeCode(A.bc) && normalizeCode(B.bc) && normalizeCode(A.bc)===normalizeCode(B.bc);
+          const artEq= normalizeCode(A.art)&& normalizeCode(B.art)&& normalizeCode(A.art)===normalizeCode(B.art);
+
+          pairs.push({i,j,sumDiff,sumThreshold,nameClose:nm.close,nameTentative:nm.tentative, bcEq, artEq});
+        }));
+
+        const usedI=new Set(), usedJ=new Set(), sel=[];
+
+        // Приоритет: штрих -> артикул -> имя -> сумма
+        pairs.sort((a,b)=>{
+          const ap=(a.bcEq?2:0)+(a.artEq?1:0);
+          const bp=(b.bcEq?2:0)+(b.artEq?1:0);
+          if(bp!==ap) return bp-ap;
+          if(a.nameClose!==b.nameClose) return a.nameClose?-1:1;
+          return a.sumDiff-b.sumDiff;
+        });
+
+        const isName=p=>p.nameClose;
+        const isSum=p=>p.sumDiff<=p.sumThreshold;
+
+        for(const p of pairs) if(!usedI.has(p.i)&&!usedJ.has(p.j)&&(p.bcEq||p.artEq)&&isSum(p)){ usedI.add(p.i); usedJ.add(p.j); sel.push(p); }
+        for(const p of pairs) if(!usedI.has(p.i)&&!usedJ.has(p.j)&&(p.bcEq||p.artEq)){ usedI.add(p.i); usedJ.add(p.j); sel.push(p); }
+        for(const p of pairs) if(!usedI.has(p.i)&&!usedJ.has(p.j)&&isName(p)&&isSum(p)){ usedI.add(p.i); usedJ.add(p.j); sel.push(p); }
+        for(const p of pairs) if(!usedI.has(p.i)&&!usedJ.has(p.j)&&isName(p)&&!isSum(p)){ usedI.add(p.i); usedJ.add(p.j); sel.push(p); }
+        for(const p of pairs) if(!usedI.has(p.i)&&!usedJ.has(p.j)&&!isName(p)&&isSum(p)){ usedI.add(p.i); usedJ.add(p.j); sel.push(p); }
+        for(const p of pairs) if(!usedI.has(p.i)&&!usedJ.has(p.j)){ usedI.add(p.i); usedJ.add(p.j); sel.push(p); }
+
+        const byJ={}; sel.forEach(p=>byJ[p.j]=p);
+        const ordered=[];
+        for(let j=0;j<list2.length;j++){
+          if(Object.prototype.hasOwnProperty.call(byJ,j)){
+            const p=byJ[j], A=list1[p.i], B=list2[p.j], pct=nameSimilarityPct(A.name,B.name);
+            ordered.push({
+              type:"item",
+              name1:A.name, bc1:A.bc, art1:A.art, sum1:A.sum, qty1:A.qty,
+              name2:B.name, bc2:B.bc, art2:B.art, sum2:B.sum, qty2:B.qty,
+              rowClass:p.nameClose?"matched":"", hidden:false, similarity:pct, tentative:!!p.nameTentative,
+              i:p.i, j:p.j, manualYellow:false, reviewed:false
+            });
+          }else{
+            const B=list2[j];
+            ordered.push({
+              type:"item",
+              name1:"-", bc1:"", art1:"", sum1:0, qty1:0,
+              name2:B.name, bc2:B.bc, art2:B.art, sum2:B.sum, qty2:B.qty,
+              rowClass:"grp-right-only", hidden:false, similarity:null, tentative:false,
+              i:null, j:j, manualYellow:false, reviewed:false
+            });
+          }
+        }
+        for(let i=0;i<list1.length;i++){
+          if(!usedI.has(i)){
+            const A=list1[i];
+            ordered.push({
+              type:"item",
+              name1:A.name, bc1:A.bc, art1:A.art, sum1:A.sum, qty1:A.qty,
+              name2:"-", bc2:"", art2:"", sum2:0, qty2:0,
+              rowClass:"grp-left-only", hidden:false, similarity:null, tentative:false,
+              i:i, j:null, manualYellow:false, reviewed:false
+            });
+          }
+        }
+
+        // --- ОБНОВЛЕНИЕ ЛЕВЫХ ИНДЕКСОВ И TEXTAREA ПО НОВОМУ ПОРЯДКУ ---
+        const newLeft = [], seen = new Set();
+        ordered.forEach(it => {
+          if (typeof it.i === "number" && !seen.has(it.i)) { newLeft.push(it.i); seen.add(it.i); }
+        });
+        for (let i = 0; i < list1.length; i++) if (!seen.has(i)) { newLeft.push(i); seen.add(i); }
+
+        const iRemap = {};
+        newLeft.forEach((oldI, newI) => { iRemap[oldI] = newI; });
+        ordered.forEach(it => { if (typeof it.i === "number" && Object.prototype.hasOwnProperty.call(iRemap, it.i)) it.i = iRemap[it.i]; });
+
+        $('#'+TA.n1).value  = newLeft.map(i => list1[i].name).join('\n');
+        $('#'+TA.bc1).value = newLeft.map(i => list1[i].bc).join('\n');
+        $('#'+TA.a1).value  = newLeft.map(i => list1[i].art).join('\n');
+        $('#'+TA.s1).value  = newLeft.map(i => formatSum(list1[i].sum)).join('\n');
+        $('#'+TA.q1).value  = newLeft.map(i => formatQty(list1[i].qty)).join('\n');
+        saveInputs();
+        // --- КОНЕЦ БЛОКА ---
+
+        lastViewBeforeGroup=null; lastViewBeforeSort=null; groupedBySums=false; sortSimActive=false;
+        $("#groupSumsBtn").textContent="Сгруппировать по суммам";
+        $("#sortSimBtn").textContent="Сортировать по схожести";
+
+        yellowFilterActive = false;
+        $("#filterYellowBtn").textContent = "Только жёлтые";
+
+        renderTable(ordered);
+      });
+
+      /* ==================== group by second sum (toggle) ==================== */
+      function groupRowsBySecondSumOnly(data){
+        const counts=new Map();
+        data.forEach(item=>{
+          const s2=Number( typeof item.sum2==="number"? item.sum2 : parseSum(item.sum2||0) )||0;
+          const k=String(s2); counts.set(k,(counts.get(k)||0)+1);
+        });
+        const dup=new Set( Array.from(counts.entries()).filter(([k,v])=>v>1).map(([k])=>k) );
+        if(dup.size===0) return data.slice();
+        const firstIdx=new Map();
+        data.forEach((item,idx)=>{ const k=String(Number(typeof item.sum2==="number"?item.sum2:parseSum(item.sum2||0))||0); if(dup.has(k) && !firstIdx.has(k)) firstIdx.set(k,idx); });
+        const keys=Array.from(dup).sort((a,b)=>firstIdx.get(a)-firstIdx.get(b));
+        const res=[], moved=new Set();
+        keys.forEach(sumKey=>{ data.forEach((row,idx)=>{ const k=String(Number(typeof row.sum2==="number"?row.sum2:parseSum(row.sum2||0))||0); if(k===sumKey){ res.push(row); moved.add(idx);} });});
+        data.forEach((row,idx)=>{ if(!moved.has(idx)) res.push(row); });
+        return res;
+      }
+
+      $('#groupSumsBtn').addEventListener('click',()=>{
+        const btn=$("#groupSumsBtn"); const cur=snapshotFromDOM(); if(!cur.length) return;
+        if(!groupedBySums){
+          pushUndo('group-by-sum');
+          lastViewBeforeGroup=cur; renderTable(groupRowsBySecondSumOnly(cur)); groupedBySums=true; btn.textContent="Вернуть исходный порядок";
+        } else {
+          pushUndo('group-restore');
+          renderTable(lastViewBeforeGroup||snapshotFromDOM()); groupedBySums=false; btn.textContent="Сгруппировать по суммам";
+        }
+      });
+
+      /* ==================== sort by similarity (toggle) ==================== */
+      $('#sortSimBtn').addEventListener('click',()=>{
+        const btn=$("#sortSimBtn"); const cur=snapshotFromDOM(); if(!cur.length) return;
+        if(!sortSimActive){
+          pushUndo('sort-by-similarity');
+          lastViewBeforeSort=cur;
+          const toSort=cur.map(r=>{ const pct=nameSimilarityPct(r.name1||"", r.name2||"")||0; return Object.assign({}, r, {similarity:pct}); });
+          toSort.sort((a,b)=>a.similarity-b.similarity);
+          renderTable(toSort); sortSimActive=true; btn.textContent="Вернуть порядок";
+        }else{
+          pushUndo('sort-restore');
+          renderTable(lastViewBeforeSort||snapshotFromDOM()); sortSimActive=false; btn.textContent="Сортировать по схожести";
+        }
+      });
+
+      /* ==================== remove/restore hidden rows (toggle) ==================== */
+      $('#removeHiddenBtn').addEventListener('click',()=>{
+        const tbody=$('tbody'); if(!tbody) return; const btn=$("#removeHiddenBtn");
+        if(!hiddenRemoved){
+          pushUndo('remove-hidden');
+          removedHiddenRows=[]; const rows=Array.from(tbody.children);
+          for(let idx=0; idx<rows.length; idx++){ const r=rows[idx]; if(r.classList.contains('hidden-text')) removedHiddenRows.push({html:r.outerHTML, index:idx}); }
+          for(let k=removedHiddenRows.length-1;k>=0;k--){ const item=removedHiddenRows[k]; const now=tbody.children; if(now[item.index]) tbody.removeChild(now[item.index]); else{ const found=Array.from(tbody.children).find(ch=>ch.classList.contains('hidden-text')); if(found) tbody.removeChild(found); } }
+          hiddenRemoved=true; btn.textContent="Вернуть скрытые строки"; computeTotals(); saveTableState();
+        }else{
+          pushUndo('restore-hidden');
+          const now=tbody.children;
+          removedHiddenRows.sort((a,b)=>a.index-b.index).forEach(item=>{
+            const temp=document.createElement('tbody'); temp.innerHTML=item.html.trim(); const newRow=temp.firstChild;
+            const before = now.length>item.index ? now[item.index] : null;
+            before ? tbody.insertBefore(newRow,before) : tbody.appendChild(newRow);
+          });
+          removedHiddenRows=[]; hiddenRemoved=false; btn.textContent="Убрать скрытые строки";
+          rebindTable(); computeTotals(); saveTableState();
+        }
+      });
+
+      /* ==================== yellow filter toggle ==================== */
+      $('#filterYellowBtn').addEventListener('click', ()=>{
+        yellowFilterActive = !yellowFilterActive;
+        applyYellowFilterToRows();
+        $('#filterYellowBtn').textContent = yellowFilterActive ? 'Показать все' : 'Только жёлтые';
+        applySearch($('#searchInput').value);
+      });
+
+      /* ==================== checked filter toggle ==================== */
+      $('#toggleCheckedFilterBtn').addEventListener('click', ()=>{
+        checkedFilterActive = !checkedFilterActive;
+        applyCheckedFilterToRows();
+        $('#toggleCheckedFilterBtn').textContent = checkedFilterActive ? 'Показать отмеченные' : 'Скрыть отмеченные';
+        applySearch($('#searchInput').value);
+      });
+
+      /* ==================== mismatch nav ==================== */
+      $('#gotoMismatchBtn').addEventListener('click',()=>{
+        const rows = $$('tbody tr[data-row="true"]:not(.hidden-text):not(.filtered-out):not(.filtered-out-checked)')
+          .filter(r=>r.classList.contains('sum-mismatch')||r.classList.contains('qty-mismatch'));
+        if(!rows.length){ alert("Несходящие строки не найдены."); mismatchPointer=-1; return; }
+        mismatchPointer = (mismatchPointer + 1) % rows.length;
+        const target=rows[mismatchPointer];
+        if(target){
+          target.scrollIntoView({behavior:"smooth", block:"center"});
+          flashRowAndCells(target);
+          $$('tbody tr').forEach(r=>r.classList.remove('selected')); target.classList.add('selected'); setTimeout(()=>target.classList.remove('selected'),900);
+        }
+      });
+      function flashRowAndCells(row){
+        row.classList.remove('mismatch-focus'); row.offsetWidth; row.classList.add('mismatch-focus'); setTimeout(()=>row.classList.remove('mismatch-focus'),900);
+        const sumCells=[row.children[COL.sum1],row.children[COL.sum2]], qtyCells=[row.children[COL.qty1],row.children[COL.qty2]];
+        const doSum=row.classList.contains('sum-mismatch'), doQty=row.classList.contains('qty-mismatch');
+        const cells=[]; if(doSum) cells.push(...sumCells); if(doQty) cells.push(...qtyCells);
+        cells.forEach(td=>{ if(!td) return; td.classList.add('cell-flash'); setTimeout(()=>td.classList.remove('cell-flash'),1200); });
+      }
+
+      /* ==================== theme toggle ==================== */
+      $('#toggleThemeBtn').addEventListener('click',()=>{
+        pushUndo('toggle-theme');
+        const dark = !document.documentElement.classList.contains('dark');
+        document.documentElement.classList.toggle('dark', dark);
+        localStorage.setItem('darkMode', dark);
+        $('#toggleThemeBtn').textContent = dark ? "☀️ Светлый режим" : "🌙 Темный режим";
+      });
+
+      /* ==================== toolbar add & undo/redo buttons ==================== */
+      $('#addLeftBtn').addEventListener('click', ()=>addNewItem('left'));
+      $('#addRightBtn').addEventListener('click',()=>addNewItem('right'));
+      $('#undoBtn').addEventListener('click', ()=>undo());
+      $('#redoBtn').addEventListener('click', ()=>redo());
+
+      /* ==================== keyboard shortcuts for undo/redo + search nav ==================== */
+      on(document,'keydown', (e)=>{
+        const key = (e.key||'').toLowerCase();
+        if ((e.ctrlKey || e.metaKey) && !e.shiftKey && key==='z'){ e.preventDefault(); undo(); }
+        else if ((e.ctrlKey || e.metaKey) && (key==='y' || (e.shiftKey && key==='z'))){ e.preventDefault(); redo(); }
+        else if(key==='enter' && document.activeElement === $('#searchInput')){ e.preventDefault(); gotoNextSearchHit(); }
+      });
+
+      /* ==================== SEARCH ==================== */
+      let searchHits=[], searchPointer=-1;
+
+      function clearSearchHighlights(){
+        $$('tbody tr[data-row="true"]').forEach(r=>{
+          r.classList.remove('search-hit');
+          $$('td', r).forEach(td=>td.classList.remove('search-hit-cell'));
+        });
+      }
+
+      function rowTextBundle(row){
+        const name1=stripHtml(row.children[COL.name1].innerHTML).toLowerCase();
+        const name2=stripHtml(row.children[COL.name2].innerHTML).toLowerCase();
+        const bc1=stripHtml(row.children[COL.bc1].innerHTML).toLowerCase();
+        const bc2=stripHtml(row.children[COL.bc2].innerHTML).toLowerCase();
+        const a1 =stripHtml(row.children[COL.art1].innerHTML).toLowerCase();
+        const a2 =stripHtml(row.children[COL.art2].innerHTML).toLowerCase();
+        const s1 =row.children[COL.sum1].textContent.toLowerCase();
+        const s2 =row.children[COL.sum2].textContent.toLowerCase();
+        const q1 =row.children[COL.qty1].textContent.toLowerCase();
+        const q2 =row.children[COL.qty2].textContent.toLowerCase();
+        return {name1,name2,bc1,bc2,a1,a2,s1,s2,q1,q2};
+      }
+
+      function applySearch(query){
+        clearSearchHighlights();
+        searchHits=[]; searchPointer=-1;
+
+        const q=String(query||"").trim();
+        if(!q){
+          setText($('#searchCount'), '0/0');
+          return;
+        }
+
+        const tokens = q.toLowerCase().split(/\s+/).filter(Boolean);
+        const rows = $$('tbody tr[data-row="true"]:not(.filtered-out):not(.filtered-out-checked)');
+
+        rows.forEach(row=>{
+          const B=rowTextBundle(row);
+          let hit=false;
+          const hitCells=new Set();
+
+          for(const t of tokens){
+            const num = parseSum(t);
+            const hasDigit = /\d/.test(t);
+
+            // числовой токен: пробуем найти в суммах/кол-ве + как подстроку в штрихе/артикуле
+            if(hasDigit && (num!==0 || t.replace(/[^\d]/g,"").length>=3)){
+              // подстрока в кодах
+              if(B.bc1.includes(t) || B.bc2.includes(t)){ hit=true; hitCells.add(COL.bc1); hitCells.add(COL.bc2); }
+              if(B.a1.includes(t)  || B.a2.includes(t)){ hit=true; hitCells.add(COL.art1); hitCells.add(COL.art2); }
+
+              // сумма/кол-во: сравнение по числу и/или по подстроке
+              const s1n=parseSum(B.s1), s2n=parseSum(B.s2), q1n=parseSum(B.q1), q2n=parseSum(B.q2);
+              if(num && (Math.abs(s1n-num)<=0.009 || Math.abs(s2n-num)<=0.009)){
+                hit=true; hitCells.add(COL.sum1); hitCells.add(COL.sum2);
+              }else{
+                if(B.s1.includes(t) || B.s2.includes(t)){ hit=true; hitCells.add(COL.sum1); hitCells.add(COL.sum2); }
+              }
+              if(num && (Math.abs(q1n-num)<=0.009 || Math.abs(q2n-num)<=0.009)){
+                hit=true; hitCells.add(COL.qty1); hitCells.add(COL.qty2);
+              }else{
+                if(B.q1.includes(t) || B.q2.includes(t)){ hit=true; hitCells.add(COL.qty1); hitCells.add(COL.qty2); }
+              }
+              continue;
+            }
+
+            // текстовый токен
+            if(B.name1.includes(t) || B.name2.includes(t)){ hit=true; hitCells.add(COL.name1); hitCells.add(COL.name2); }
+            if(B.bc1.includes(t) || B.bc2.includes(t)){ hit=true; hitCells.add(COL.bc1); hitCells.add(COL.bc2); }
+            if(B.a1.includes(t)  || B.a2.includes(t)){ hit=true; hitCells.add(COL.art1); hitCells.add(COL.art2); }
+          }
+
+          if(hit){
+            row.classList.add('search-hit');
+            hitCells.forEach(ci=>{
+              const td=row.children[ci]; if(td) td.classList.add('search-hit-cell');
+            });
+            searchHits.push(row);
+          }
+        });
+
+        setText($('#searchCount'), `${searchHits.length?1:0}/${searchHits.length}`);
+      }
+
+      function gotoSearchHit(dir){
+        if(!searchHits.length){ setText($('#searchCount'),'0/0'); return; }
+        if(dir>0) searchPointer = (searchPointer+1) % searchHits.length;
+        else searchPointer = (searchPointer-1 + searchHits.length) % searchHits.length;
+
+        const target = searchHits[searchPointer];
+        if(target){
+          setText($('#searchCount'), `${searchPointer+1}/${searchHits.length}`);
+          target.scrollIntoView({behavior:"smooth", block:"center"});
+          $$('tbody tr').forEach(r=>r.classList.remove('selected'));
+          target.classList.add('selected');
+          setTimeout(()=>target.classList.remove('selected'), 900);
+        }
+      }
+      function gotoNextSearchHit(){ gotoSearchHit(+1); }
+      function gotoPrevSearchHit(){ gotoSearchHit(-1); }
+
+      on($('#searchInput'),'input',()=>applySearch($('#searchInput').value));
+      on($('#searchNextBtn'),'click',()=>gotoNextSearchHit());
+      on($('#searchPrevBtn'),'click',()=>gotoPrevSearchHit());
+
+      /* ==================== load on start ==================== */
+      on(window,'load',()=>{
+        loadInputs();
+        pushUndo('initial');
+
+        const darkSaved = localStorage.getItem('darkMode');
+        if(darkSaved!=null){
+          const dark = (darkSaved==='true');
+          document.documentElement.classList.toggle('dark', dark);
+          $('#toggleThemeBtn').textContent = dark ? "☀️ Светлый режим" : "🌙 Темный режим";
+        }
+
+        const saved=localStorage.getItem("tableState_v2");
+        if(saved){
+          try{
+            const parsed=JSON.parse(saved);
+            const restored=parsed.map(r=>({
+              type:"item",
+              name1:r.name1||"", bc1:r.bc1||"", art1:r.art1||"",
+              sum1:Number(r.sum1)||0, qty1:Number(r.qty1)||0,
+              name2:r.name2||"", bc2:r.bc2||"", art2:r.art2||"",
+              sum2:Number(r.sum2)||0, qty2:Number(r.qty2)||0,
+              rowClass:r.rowClass||"", hidden:!!r.hidden,
+              similarity: typeof r.similarity==="number" ? r.similarity : null,
+              tentative:!!r.tentative, manualYellow:!!r.manualYellow,
+              reviewed:!!r.reviewed,
+              i: typeof r.i==="number"?r.i:null, j: typeof r.j==="number"?r.j:null
+            }));
+            groupedBySums=false; sortSimActive=false;
+            $("#groupSumsBtn").textContent="Сгруппировать по суммам";
+            $("#sortSimBtn").textContent="Сортировать по схожести";
+            renderTable(restored);
+            return;
+          }catch(e){ console.error("Ошибка чтения tableState_v2:",e) }
+        }
+        computeTotals();
+      });
+    </script>
+  </body>
+</html>
